@@ -98,6 +98,20 @@
 
         let mediaRecorder, videoBlobs = [], estaGrabando = false, loopMezclador, canvasFantasma, ctxFantasma;
 
+        // Función para autodetectar el mejor formato soportado por el celular
+        const obtenerMimeTypeSoportado = () => {
+            const tipos = [
+                'video/mp4;codecs=h264,aac',
+                'video/mp4;codecs=h264',
+                'video/webm;codecs=vp9,opus',
+                'video/webm;codecs=vp8,opus'
+            ];
+            for (let tipo of tipos) {
+                if (MediaRecorder.isTypeSupported(tipo)) return tipo;
+            }
+            return '';
+        };
+
         recordButton.addEventListener('click', async () => {
             if (!estaGrabando) {
                 try {
@@ -106,20 +120,19 @@
                     if (!videoCamaraPersona) return alert("Espera a que cargue la cámara.");
 
                     canvasFantasma = document.createElement('canvas');
-                    canvasFantasma.width = canvasAR.clientWidth * window.devicePixelRatio;
-                    canvasFantasma.height = canvasAR.clientHeight * window.devicePixelRatio;
+                    // Optimizamos resolución de captura para no colapsar la RAM del móvil pero manteniendo HD
+                    canvasFantasma.width = 720;
+                    canvasFantasma.height = 1280;
                     ctxFantasma = canvasFantasma.getContext('2d');
 
-                    const procesarFrame = () => {
+                    estaGrabando = true;
+
+                    // Bucle ultra-estable a 24 FPS constantes sin desincronización
+                    loopMezclador = setInterval(() => {
                         if (!estaGrabando) return;
                         ctxFantasma.drawImage(videoCamaraPersona, 0, 0, canvasFantasma.width, canvasFantasma.height);
                         ctxFantasma.drawImage(canvasAR, 0, 0, canvasFantasma.width, canvasFantasma.height);
-                        // Forzamos 24 FPS constantes para la fluidez
-                        loopMezclador = setTimeout(() => { requestAnimationFrame(procesarFrame); }, 1000 / 24);
-                    };
-
-                    estaGrabando = true;
-                    procesarFrame();
+                    }, 1000 / 24);
 
                     const streamVisual = canvasFantasma.captureStream(24);
                     const pistaVideoCombinada = streamVisual.getVideoTracks()[0];
@@ -130,20 +143,34 @@
                     if (pistaAudio) componentesFlujo.push(pistaAudio);
 
                     const streamFinal = new MediaStream(componentesFlujo);
-                    mediaRecorder = new MediaRecorder(streamFinal, { mimeType: 'video/webm;codecs=vp8,opus', videoBitsPerSecond: 2500000 });
+                    const mimeTypeAsignado = obtenerMimeTypeSoportado();
+
+                    // Ajustamos tasa de bits a 3.5 Mbps para nitidez absoluta en movimiento
+                    mediaRecorder = new MediaRecorder(streamFinal, { 
+                        mimeType: mimeTypeAsignado, 
+                        videoBitsPerSecond: 3500000 
+                    });
+
                     videoBlobs = [];
                     mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) videoBlobs.push(e.data); };
+                    
                     mediaRecorder.onstop = () => {
-                        clearTimeout(loopMezclador);
-                        const blobFinal = new Blob(videoBlobs, { type: 'video/webm' });
+                        clearInterval(loopMezclador);
+                        
+                        // Determinar la extensión correcta según el formato grabado
+                        const esMP4 = mimeTypeAsignado.includes('mp4');
+                        const blobFinal = new Blob(videoBlobs, { type: esMP4 ? 'video/mp4' : 'video/webm' });
                         const urlDescarga = URL.createObjectURL(blobFinal);
+                        
                         const enlace = document.createElement('a');
                         enlace.href = urlDescarga;
-                        enlace.download = 'LegacyAR_' + Date.now() + '.webm';
+                        enlace.download = 'LegacyAR_' + Date.now() + (esMP4 ? '.mp4' : '.webm');
                         enlace.click();
+                        
                         canvasFantasma = null;
                     };
-                    mediaRecorder.start();
+
+                    mediaRecorder.start(100); // Tramos de 100ms para evitar congelamientos de buffer
                     iconRecord.innerHTML = '<rect x="4" y="4" width="16" height="16" fill="white"/>';
                     recordButton.classList.add('grabando');
                 } catch (error) { alert("Error de grabación: " + error.message); estaGrabando = false; }
