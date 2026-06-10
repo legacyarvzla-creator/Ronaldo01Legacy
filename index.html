@@ -8,7 +8,6 @@
     <style>
         body { margin: 0; overflow: hidden; background-color: black; font-family: sans-serif; -webkit-tap-highlight-color: transparent; }
         
-        /* Interfaz de usuario limpia inferior */
         #ui { 
             position: absolute; z-index: 9999; bottom: 40px; left: 50%; 
             transform: translateX(-50%); width: auto;
@@ -27,10 +26,7 @@
             padding: 0; outline: none;
         }
         .btn-circular:active { transform: scale(0.9); }
-        
-        .btn-circular svg {
-            width: 26px; height: 26px; fill: currentColor; transition: fill 0.2s ease;
-        }
+        .btn-circular svg { width: 26px; height: 26px; fill: currentColor; }
 
         .btn-circular.grabando { background: rgba(244, 67, 54, 0.9); border-color: #f44336; }
         .btn-circular.grabando::after {
@@ -62,14 +58,16 @@
         </button>
     </div>
 
-    <video id="miVideo" src="./video.mp4" preload="auto" crossorigin="anonymous" webkit-playsinline playsinline loop></video>
-
     <a-scene mindar-image="imageTargetSrc: ./targets.mind; autoStart: true; uiScanning: no; uiLoading: no; filterMinCF: 0.0005; filterBeta: 0.005;" 
              color-space="sRGB" 
-             renderer="colorManagement: true, physicallyCorrectLights, preserveDrawingBuffer: true, alpha: true" 
+             renderer="colorManagement: true, physicallyCorrectLights, preserveDrawingBuffer: true, alpha: true, clearColor: #00000000" 
              vr-mode-ui="enabled: false" 
              device-orientation-permission-ui="enabled: false">
         
+        <a-assets>
+            <video id="miVideo" src="video.mp4" preload="auto" crossorigin="anonymous" webkit-playsinline playsinline loop></video>
+        </a-assets>
+
         <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
 
         <a-entity id="franelaTarget" mindar-image-target="targetIndex: 0">
@@ -83,8 +81,8 @@
         const iconRecord = document.querySelector('#iconRecord');
         const torchButton = document.querySelector('#torchButton');
         const franelaTarget = document.querySelector('#franelaTarget');
+        const escena = document.querySelector('a-scene');
 
-        // Activación del contexto de audio por interacción obligatoria de usuario
         const activarContextoAudio = () => {
             video.play().then(() => { if (!targetDetectado) video.pause(); }).catch(err => console.log("Esperando..."));
             document.removeEventListener('click', activarContextoAudio);
@@ -93,19 +91,16 @@
         document.addEventListener('click', activarContextoAudio);
         document.addEventListener('touchstart', activarContextoAudio);
 
-        // Controladores de detección de imagen objetivo (T-Shirt)
         let targetDetectado = false;
         franelaTarget.addEventListener("targetFound", () => { targetDetectado = true; video.play().catch(e => {}); });
         franelaTarget.addEventListener("targetLost", () => { targetDetectado = false; video.pause(); });
 
         let mediaRecorder, videoBlobs = [], estaGrabando = false, loopMezclador, canvasFantasma, ctxFantasma;
 
-        // Auto-detección del codec más óptimo según el ecosistema del smartphone
         const obtenerMimeTypeSoportado = () => {
             const tipos = [
                 'video/mp4;codecs=h264,aac',
                 'video/mp4;codecs=h264',
-                'video/webm;codecs=vp9,opus',
                 'video/webm;codecs=vp8,opus'
             ];
             for (let tipo of tipos) {
@@ -117,11 +112,10 @@
         recordButton.addEventListener('click', async () => {
             if (!estaGrabando) {
                 try {
-                    const canvasAR = document.querySelector('canvas');
+                    const canvasAR = escena.canvas;
                     const videoCamaraPersona = document.querySelector('video:not(#miVideo)');
                     if (!videoCamaraPersona) return alert("Espera a que cargue la cámara.");
 
-                    // Sincronización exacta de dimensiones para evitar pérdida de la capa WebGL
                     canvasFantasma = document.createElement('canvas');
                     canvasFantasma.width = canvasAR.width;
                     canvasFantasma.height = canvasAR.height;
@@ -129,17 +123,18 @@
 
                     estaGrabando = true;
 
-                    // Mezclador síncrono: Asegura el orden correcto de las capas a 24 FPS reales
                     const mezclarFotogramas = () => {
                         if (!estaGrabando) return;
                         
-                        // Capa 1: Renderizar la cámara real (Fondo/Sujeto)
+                        // 1. Forzamos a la tarjeta gráfica a renderizar el frame actual de A-Frame de forma explícita
+                        escena.renderer.render(escena.object3D, escena.camera);
+                        
+                        // 2. Dibujamos la cámara de fondo
                         ctxFantasma.drawImage(videoCamaraPersona, 0, 0, canvasFantasma.width, canvasFantasma.height);
                         
-                        // Capa 2: Renderizar los gráficos 3D sobre la camisa (A-Frame Canvas)
+                        // 3. Dibujamos encima el canvas 3D capturado en caliente
                         ctxFantasma.drawImage(canvasAR, 0, 0, canvasFantasma.width, canvasFantasma.height);
                         
-                        // Anidamiento controlado para mantener estabilidad sin saltos de reloj
                         loopMezclador = setTimeout(() => {
                             requestAnimationFrame(mezclarFotogramas);
                         }, 1000 / 24);
@@ -147,11 +142,15 @@
 
                     mezclarFotogramas();
 
-                    // Captura del flujo y unión de pistas de video y audio nativas
                     const streamVisual = canvasFantasma.captureStream(24);
                     const pistaVideoCombinada = streamVisual.getVideoTracks()[0];
-                    const streamAudioNativo = video.captureStream ? video.captureStream() : video.mozCaptureStream ? video.mozCaptureStream() : null;
-                    const pistaAudio = streamAudioNativo ? streamAudioNativo.getAudioTracks()[0] : null;
+                    
+                    // Captura segura de audio
+                    let pistaAudio = null;
+                    try {
+                        const streamAudioNativo = video.captureStream ? video.captureStream() : video.mozCaptureStream ? video.mozCaptureStream() : null;
+                        if (streamAudioNativo) pistaAudio = streamAudioNativo.getAudioTracks()[0];
+                    } catch(e) { console.log("Audio capturado por canal alterno o no disponible directamente"); }
                     
                     const componentesFlujo = [pistaVideoCombinada];
                     if (pistaAudio) componentesFlujo.push(pistaAudio);
@@ -159,7 +158,6 @@
                     const streamFinal = new MediaStream(componentesFlujo);
                     const mimeTypeAsignado = obtenerMimeTypeSoportado();
 
-                    // Inicialización del grabador con bitrate enfocado en alta definición móvil
                     mediaRecorder = new MediaRecorder(streamFinal, { 
                         mimeType: mimeTypeAsignado, 
                         videoBitsPerSecond: 3500000 
@@ -183,7 +181,7 @@
                         canvasFantasma = null;
                     };
 
-                    mediaRecorder.start(100); // Segmentación a 100ms para evitar micro-cortes de búfer
+                    mediaRecorder.start(100);
                     iconRecord.innerHTML = '<rect x="4" y="4" width="16" height="16" fill="white"/>';
                     recordButton.classList.add('grabando');
                 } catch (error) { alert("Error de grabación: " + error.message); estaGrabando = false; }
@@ -195,10 +193,14 @@
             }
         });
 
-        // Lógica de encendido/apagado de la linterna física
         torchButton.addEventListener('click', async () => {
             try {
-                const track = document.querySelector('a-scene').systems["mindar-image-system"].video.srcObject.getVideoTracks()[0];
+                const track = escena.systems["mindar-image-system"].video.srcObject.getVideoTracks()[0];
                 if (track && track.getCapabilities().torch) {
                     await track.applyConstraints({ advanced: [{ torch: !(track.getConstraints().advanced?.[0]?.torch) }] });
                 }
+            } catch (err) { alert("Linterna no disponible."); }
+        });
+    </script>
+</body>
+</html>
