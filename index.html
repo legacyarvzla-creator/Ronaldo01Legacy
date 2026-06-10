@@ -84,6 +84,7 @@
         const torchButton = document.querySelector('#torchButton');
         const franelaTarget = document.querySelector('#franelaTarget');
 
+        // Activación del contexto de audio por interacción obligatoria de usuario
         const activarContextoAudio = () => {
             video.play().then(() => { if (!targetDetectado) video.pause(); }).catch(err => console.log("Esperando..."));
             document.removeEventListener('click', activarContextoAudio);
@@ -92,13 +93,14 @@
         document.addEventListener('click', activarContextoAudio);
         document.addEventListener('touchstart', activarContextoAudio);
 
+        // Controladores de detección de imagen objetivo (T-Shirt)
         let targetDetectado = false;
         franelaTarget.addEventListener("targetFound", () => { targetDetectado = true; video.play().catch(e => {}); });
         franelaTarget.addEventListener("targetLost", () => { targetDetectado = false; video.pause(); });
 
         let mediaRecorder, videoBlobs = [], estaGrabando = false, loopMezclador, canvasFantasma, ctxFantasma;
 
-        // Función para autodetectar el mejor formato soportado por el celular
+        // Auto-detección del codec más óptimo según el ecosistema del smartphone
         const obtenerMimeTypeSoportado = () => {
             const tipos = [
                 'video/mp4;codecs=h264,aac',
@@ -119,21 +121,33 @@
                     const videoCamaraPersona = document.querySelector('video:not(#miVideo)');
                     if (!videoCamaraPersona) return alert("Espera a que cargue la cámara.");
 
+                    // Sincronización exacta de dimensiones para evitar pérdida de la capa WebGL
                     canvasFantasma = document.createElement('canvas');
-                    // Optimizamos resolución de captura para no colapsar la RAM del móvil pero manteniendo HD
-                    canvasFantasma.width = 720;
-                    canvasFantasma.height = 1280;
+                    canvasFantasma.width = canvasAR.width;
+                    canvasFantasma.height = canvasAR.height;
                     ctxFantasma = canvasFantasma.getContext('2d');
 
                     estaGrabando = true;
 
-                    // Bucle ultra-estable a 24 FPS constantes sin desincronización
-                    loopMezclador = setInterval(() => {
+                    // Mezclador síncrono: Asegura el orden correcto de las capas a 24 FPS reales
+                    const mezclarFotogramas = () => {
                         if (!estaGrabando) return;
+                        
+                        // Capa 1: Renderizar la cámara real (Fondo/Sujeto)
                         ctxFantasma.drawImage(videoCamaraPersona, 0, 0, canvasFantasma.width, canvasFantasma.height);
+                        
+                        // Capa 2: Renderizar los gráficos 3D sobre la camisa (A-Frame Canvas)
                         ctxFantasma.drawImage(canvasAR, 0, 0, canvasFantasma.width, canvasFantasma.height);
-                    }, 1000 / 24);
+                        
+                        // Anidamiento controlado para mantener estabilidad sin saltos de reloj
+                        loopMezclador = setTimeout(() => {
+                            requestAnimationFrame(mezclarFotogramas);
+                        }, 1000 / 24);
+                    };
 
+                    mezclarFotogramas();
+
+                    // Captura del flujo y unión de pistas de video y audio nativas
                     const streamVisual = canvasFantasma.captureStream(24);
                     const pistaVideoCombinada = streamVisual.getVideoTracks()[0];
                     const streamAudioNativo = video.captureStream ? video.captureStream() : video.mozCaptureStream ? video.mozCaptureStream() : null;
@@ -145,7 +159,7 @@
                     const streamFinal = new MediaStream(componentesFlujo);
                     const mimeTypeAsignado = obtenerMimeTypeSoportado();
 
-                    // Ajustamos tasa de bits a 3.5 Mbps para nitidez absoluta en movimiento
+                    // Inicialización del grabador con bitrate enfocado en alta definición móvil
                     mediaRecorder = new MediaRecorder(streamFinal, { 
                         mimeType: mimeTypeAsignado, 
                         videoBitsPerSecond: 3500000 
@@ -155,9 +169,8 @@
                     mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) videoBlobs.push(e.data); };
                     
                     mediaRecorder.onstop = () => {
-                        clearInterval(loopMezclador);
+                        clearTimeout(loopMezclador);
                         
-                        // Determinar la extensión correcta según el formato grabado
                         const esMP4 = mimeTypeAsignado.includes('mp4');
                         const blobFinal = new Blob(videoBlobs, { type: esMP4 ? 'video/mp4' : 'video/webm' });
                         const urlDescarga = URL.createObjectURL(blobFinal);
@@ -170,7 +183,7 @@
                         canvasFantasma = null;
                     };
 
-                    mediaRecorder.start(100); // Tramos de 100ms para evitar congelamientos de buffer
+                    mediaRecorder.start(100); // Segmentación a 100ms para evitar micro-cortes de búfer
                     iconRecord.innerHTML = '<rect x="4" y="4" width="16" height="16" fill="white"/>';
                     recordButton.classList.add('grabando');
                 } catch (error) { alert("Error de grabación: " + error.message); estaGrabando = false; }
@@ -182,14 +195,10 @@
             }
         });
 
+        // Lógica de encendido/apagado de la linterna física
         torchButton.addEventListener('click', async () => {
             try {
                 const track = document.querySelector('a-scene').systems["mindar-image-system"].video.srcObject.getVideoTracks()[0];
                 if (track && track.getCapabilities().torch) {
                     await track.applyConstraints({ advanced: [{ torch: !(track.getConstraints().advanced?.[0]?.torch) }] });
                 }
-            } catch (err) { alert("Linterna no disponible."); }
-        });
-    </script>
-</body>
-</html>
